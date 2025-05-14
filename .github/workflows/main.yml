@@ -1,0 +1,199 @@
+name: Advanced CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: '0 0 * * *' # Daily at midnight
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+        - staging
+        - production
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_ENV: production
+  CI: true
+
+jobs:
+  lint:
+    name: Lint Code
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Cache node modules
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+            
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          
+      - name: Install dependencies
+        run: npm ci
+          
+      - name: Run linter
+        run: npm run lint
+        
+    outputs:
+      lint_status: ${{ steps.lint.outcome }}
+
+  test:
+    name: Run Tests
+    needs: lint
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        node-version: [18.x, 20.x]
+        os: [ubuntu-latest, windows-latest]
+        include:
+          - node-version: 18.x
+            os: ubuntu-latest
+            test-command: 'npm test:ci'
+          - node-version: 20.x
+            os: windows-latest
+            test-command: 'npm test'
+      fail-fast: false
+      
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          
+      - name: Install dependencies
+        run: npm ci
+          
+      - name: Run tests
+        run: ${{ matrix.test-command }}
+        env:
+          NODE_ENV: test
+          
+      - name: Upload coverage report
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report-${{ matrix.os }}-${{ matrix.node-version }}
+          path: coverage
+          
+      - name: Notify on failure
+        if: failure()
+        uses: actions/slack@v1
+        with:
+          payload: |
+            {
+              "text": "Tests failed in ${{ matrix.os }} (Node ${{ matrix.node-version }})",
+              "channel": "#alerts"
+            }
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+
+  build:
+    name: Build Artifacts
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          
+      - run: npm ci
+      - run: npm run build
+      
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts
+          path: dist
+          retention-days: 5
+
+  deploy:
+    name: Deploy Application
+    needs: build
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    environment: 
+      name: ${{ github.event.inputs.environment || 'production' }}
+      url: https://${{ github.event.inputs.environment || 'production' }}.your-app.com
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifacts
+          
+      - name: Deploy to ${{ github.event.inputs.environment || 'production' }}
+        run: |
+          echo "Deploying to ${{ github.event.inputs.environment || 'production' }} environment"
+          # Your deployment commands here
+        env:
+          DEPLOY_TOKEN: ${{ secrets.PRODUCTION_TOKEN }}
+          
+      - name: Verify deployment
+        run: curl -sSf https://${{ github.event.inputs.environment || 'production' }}.your-app.com/healthcheck
+        
+      - name: Post deployment notification
+        uses: actions/slack@v1
+        with:
+          payload: |
+            {
+              "text": "Successfully deployed to ${{ github.event.inputs.environment || 'production' }}",
+              "channel": "#deployments"
+            }
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+
+  call-reusable:
+    name: Reusable Workflow Example
+    needs: deploy
+    uses: ./.github/workflows/reusable.yml
+    with:
+      environment: 'production'
+    secrets:
+      api-token: ${{ secrets.PRODUCTION_TOKEN }}
+
+  cleanup:
+    name: Cleanup
+    if: always()
+    needs: [lint, test, build, deploy, call-reusable]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cleanup temporary files
+        run: |
+          echo "Cleaning up workflow artifacts"
+          # Add cleanup commands here
+          
+      - name: Workflow status
+        run: |
+          echo "Workflow completed with status: ${{ job.status }}"
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "All jobs completed successfully"
+          else
+            echo "Some jobs failed"
+          fi
