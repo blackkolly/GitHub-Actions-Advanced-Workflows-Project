@@ -2,7 +2,7 @@
 # GitHub Actions Advanced Workflow Project
 
 This project demonstrates an advanced CI/CD pipeline using GitHub Actions with multiple jobs, dependencies, matrices, secrets management, and reusable workflows.
-Implementation procedure
+Implementation procedure as follows:
 
 ![CI/CD Status](https://github.com/your-username/your-repo/actions/workflows/main.yml/badge.svg)
 
