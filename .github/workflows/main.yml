@@ -15,8 +15,8 @@ on:
         default: 'staging'
         type: choice
         options:
-        - staging
-        - production
+          - staging
+          - production
 
 concurrency:
   group: deploy-${{ github.ref }}
@@ -53,6 +53,7 @@ jobs:
         run: npm ci
           
       - name: Run linter
+        id: lint
         run: npm run lint
         
     outputs:
@@ -69,10 +70,10 @@ jobs:
         include:
           - node-version: 18.x
             os: ubuntu-latest
-            test-command: 'npm test:ci'
+            test-command: 'npm run test:ci'
           - node-version: 20.x
             os: windows-latest
-            test-command: 'npm test'
+            test-command: 'npm run test'
       fail-fast: false
       
     steps:
@@ -100,15 +101,12 @@ jobs:
           
       - name: Notify on failure
         if: failure()
-        uses: actions/slack@v1
+        uses: 8398a7/action-slack@v3
         with:
-          payload: |
-            {
-              "text": "Tests failed in ${{ matrix.os }} (Node ${{ matrix.node-version }})",
-              "channel": "#alerts"
-            }
+          status: failure
+          fields: repo,commit,author,job,ref
         env:
-          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
 
   build:
     name: Build Artifacts
@@ -135,9 +133,7 @@ jobs:
     name: Deploy Application
     needs: build
     if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
-    environment: 
-      name: ${{ github.event.inputs.environment || 'production' }}
-      url: https://${{ github.event.inputs.environment || 'production' }}.your-app.com
+    environment: production
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -148,26 +144,28 @@ jobs:
         with:
           name: build-artifacts
           
-      - name: Deploy to ${{ github.event.inputs.environment || 'production' }}
+      - name: Set deployment environment
+        id: env
         run: |
-          echo "Deploying to ${{ github.event.inputs.environment || 'production' }} environment"
+          echo "DEPLOY_ENV=${{ github.event.inputs.environment || 'production' }}" >> $GITHUB_ENV
+
+      - name: Deploy to environment
+        run: |
+          echo "Deploying to $DEPLOY_ENV environment"
           # Your deployment commands here
         env:
           DEPLOY_TOKEN: ${{ secrets.PRODUCTION_TOKEN }}
           
       - name: Verify deployment
-        run: curl -sSf https://${{ github.event.inputs.environment || 'production' }}.your-app.com/healthcheck
+        run: curl -sSf https://${{ env.DEPLOY_ENV }}.your-app.com/healthcheck
         
       - name: Post deployment notification
-        uses: actions/slack@v1
+        uses: 8398a7/action-slack@v3
         with:
-          payload: |
-            {
-              "text": "Successfully deployed to ${{ github.event.inputs.environment || 'production' }}",
-              "channel": "#deployments"
-            }
+          status: success
+          fields: repo,commit,author,job,ref
         env:
-          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
 
   call-reusable:
     name: Reusable Workflow Example
@@ -191,9 +189,4 @@ jobs:
           
       - name: Workflow status
         run: |
-          echo "Workflow completed with status: ${{ job.status }}"
-          if [ "${{ job.status }}" = "success" ]; then
-            echo "All jobs completed successfully"
-          else
-            echo "Some jobs failed"
-          fi
+          echo "All prior jobs finished. Manual status inspection required if any failed."
