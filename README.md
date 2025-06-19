@@ -1,5 +1,5 @@
 
-# GitHub Actions Advanced Workflow Project
+# GitHub Actions Advanced Workflow and Jenkins Project
 
 This project demonstrates an advanced CI/CD pipeline using GitHub Actions with multiple jobs, dependencies, matrices, secrets management, and reusable workflows.
 Implementation procedure as follows:
